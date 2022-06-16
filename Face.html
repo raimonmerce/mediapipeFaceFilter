@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <style>
+            body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+
+                margin: 0;
+                overflow: hidden;
+                background-color: #AAAAAA;
+                background-attachment: fixed !important;
+            }
+        </style>
+        <style>
+            body {
+                font-family: Monospace;
+                margin: 0px;
+                overflow: hidden;
+            }
+        </style>
+    </head>
+
+    <body>
+        <button id="save">Save</button>
+        <button id="undo">Undo</button>
+        <div class="container">
+            <video class="input_video"></video>
+            <canvas class="output_canvas" width="1280px" height="720px"></canvas>
+        </div>
+    </body>
+<body>
+
+<link rel="stylesheet" href="https://unpkg.com/handsfree@8.5.1/build/lib/assets/handsfree.css" />
+<script src="https://unpkg.com/handsfree@8.5.1/build/lib/handsfree.js"></script>
+
+<script type="module">
+
+import * as THREE from 'https://cdn.skypack.dev/three@0.136.0/build/three.module.js';
+import { GUI } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/libs/lil-gui.module.min.js';
+
+let camera, controls, scene, renderer, container, planSource, planProcessed;
+
+let imageProcessing, guiControls, xpos, ypos, gui;
+
+const canvasElement = document.getElementsByClassName('output_canvas')[0];
+const canvas2 = document.getElementsByClassName('output_canvas_2')[0];
+const canvasCtx = canvasElement.getContext('2d');
+let rect = canvasElement.getBoundingClientRect();
+
+let precision = 0.01;
+let click = false;
+let points = [];
+let currentPoints = [];
+let allAPI = {
+    widthS: 1.0,
+    widthL: 1.0,
+    camera: true,
+    landmarks: true,
+    colorL: '#888888',
+    colorF: '#FF0000',
+    colorS: '#00FF00',
+    fill: true,
+};
+
+init();
+animate();
+
+function init () {
+    guiControls = new function() {
+        this.higth = 0.0;
+        this.width = 0.0;
+    };
+
+    container = document.createElement( 'div' );
+    document.body.appendChild( container );
+
+    scene = new THREE.Scene(); 
+
+    renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
+    renderer.autoClear = false;
+    renderer.setPixelRatio( window.devicePixelRatio );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.shadowMap.enabled = false;
+
+    container.appendChild( renderer.domElement );
+
+    camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.001, 10 );
+    camera.position.z = 1.5;
+    window.addEventListener( 'resize', onWindowResize, false );
+
+    const handsfree = new Handsfree({facemesh: true})
+    handsfree.start()
+
+    document.addEventListener('handsfree-data', event => {
+        const data = event.detail
+        if (!data.facemesh) return
+        visualize(data.facemesh)
+    })
+
+    document.onmousemove = handleMouseMove;
+    window.onclick = clickFunction;
+    document.getElementById("save").addEventListener("click", saveShape);
+    document.getElementById("undo").addEventListener("click", undo);
+    createGUI();
+};
+
+function createGUI(){
+    gui = new GUI( { title: "Objects" } );
+    gui.add( allAPI, 'camera')
+        .name( 'Background camera' )
+        .onChange( function () {
+            
+        } );
+
+    gui.add( allAPI, 'landmarks')
+        .name( 'Landmark' )
+        .onChange( function () {
+            
+        } );
+
+    gui.add( allAPI, 'widthS', 0, 10, 0.1)
+        .name( 'Connector width' )
+        .onChange( function () {
+            
+        } );
+        
+        
+    gui.add( allAPI, 'widthL', 0.1, 10, 0.1)
+        .name( 'Connector Landmarks' )
+        .onChange( function () {
+            
+        } );
+
+    gui.addColor( allAPI, 'colorL')
+        .name( 'Color Landmarks' )
+        .onChange( function () {
+
+        } );
+
+    gui.addColor( allAPI, 'colorS')
+        .name( 'Color Stroke' )
+        .onChange( function () {
+
+        } );
+    gui.addColor( allAPI, 'colorF')
+        .name( 'Color Fill' )
+        .onChange( function () {
+
+        } );
+    gui.add( allAPI, 'fill')
+        .name( 'Fill' )
+        .onChange( function () {
+            
+        } );
+}
+
+function clickFunction() {
+    click = true;
+}
+
+function handleMouseMove(event) {
+    var eventDoc, doc, body;
+
+    event = event || window.event; 
+
+    if (event.pageX == null && event.clientX != null) {
+        eventDoc = (event.target && event.target.ownerDocument) || document;
+        doc = eventDoc.documentElement;
+        body = eventDoc.body;
+
+        event.pageX = event.clientX +
+            (doc && doc.scrollLeft || body && body.scrollLeft || 0) -
+            (doc && doc.clientLeft || body && body.clientLeft || 0);
+        event.pageY = event.clientY +
+            (doc && doc.scrollTop  || body && body.scrollTop  || 0) -
+            (doc && doc.clientTop  || body && body.clientTop  || 0 );
+    }
+    xpos = (event.pageX - rect.left) / (rect.right - rect.left)
+    ypos = (event.pageY - rect.top) / (rect.bottom - rect.top)
+}
+
+function visualize(results){
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    if (allAPI.camera)   canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+    //canvasCtx.stroke();
+
+    if (results.multiFaceLandmarks != null){
+        for (let landmarks of results.multiFaceLandmarks) {
+            if (allAPI.landmarks) drawDots(canvasCtx, landmarks, allAPI.colorL, allAPI.widthL)
+            let i = 0;
+            let found = false;
+            while (!found && i < landmarks.length){
+                if (Math.abs(landmarks[i]["x"] - xpos) < precision && Math.abs(landmarks[i]["y"] - ypos) < precision){
+                    found = true;
+                    let TEST = [landmarks[i]]
+                    drawDots(canvasCtx, TEST, allAPI.colorS, allAPI.widthL + 2);
+                    if (click) {
+                        currentPoints.push(i);
+                    }
+                }
+                ++i;
+            }
+            drawLines(canvasCtx, landmarks, currentPoints, allAPI.colorF, allAPI.colorS, allAPI.widthS, allAPI.fill);
+            for (let j = 0; j < points.length; ++j){
+                drawLines(canvasCtx, landmarks, points[j]["points"], points[j]["colorF"], points[j]["colorS"], points[j]["widthS"], points[j]["fill"]);
+            }
+        }
+    }
+    click = false;
+    var rect = canvasElement.getBoundingClientRect();
+}
+
+function drawLines(ctx, landmarks, points, colorF, colorS, widthS, fill){
+    if (points.length < 1) return;
+    ctx.fillStyle = colorF;
+    ctx.strokeStyle = colorS;
+    ctx.lineWidth = widthS;
+    ctx.beginPath();
+    let tmp = landmarks[points[0]];
+    ctx.moveTo(tmp["x"]* canvasElement.width, tmp["y"]* canvasElement.height);
+    for (let i = 1; i < points.length; ++i){
+        tmp = landmarks[points[i]];
+        ctx.lineTo(tmp["x"]* canvasElement.width, tmp["y"]* canvasElement.height);
+    }
+    
+    if (widthS > 0) ctx.stroke();
+    if (fill) {
+        ctx.fill();
+        ctx.closePath();
+    }
+}
+
+function drawDots(ctx, landmarks, colorL, widthS){
+    if (landmarks.length < 0) return;
+    for (let land in landmarks){
+        canvasCtx.beginPath();
+        canvasCtx.fillStyle = colorL;
+        canvasCtx.arc(landmarks[land]["x"]* canvasElement.width, landmarks[land]["y"]* canvasElement.height, widthS, 0, 2 * Math.PI);
+        canvasCtx.fill();
+    }
+}
+
+function getPairs(pts){
+    if (pts.length > 1){
+        let res = []
+        for (let i = 1; i < pts.length; ++i){
+            res[i-1] = [pts[i-1],pts[i]]
+        }
+        return res;
+    }
+    return false;
+}
+
+function saveShape() {
+    points.push({"points": currentPoints, "colorF" : allAPI.colorF, "colorS" : allAPI.colorS, "widthS" : allAPI.widthS, "fill" : allAPI.fill});
+    currentPoints = [];
+}
+
+function undo() {
+    if (currentPoints.length > 0) currentPoints.pop();
+    else if (points.length > 0){
+        let tmp = points.pop();
+        currentPoints = tmp["points"]
+        allAPI.widthS = tmp["widthS"]
+        allAPI.colorF = tmp["colorF"]
+        allAPI.colorS = tmp["colorS"]
+        allAPI.fill = tmp["fill"]
+    } 
+}
+
+function render () {
+    renderer.clear();
+
+    if (typeof imageProcessing !== 'undefined') 
+        IVprocess ( imageProcessing, renderer );
+    renderer.render( scene, camera );
+
+}
+
+function animate() {	
+    requestAnimationFrame(animate);
+    render();
+}
+
+function onWindowResize () {
+    camera.aspect = ( window.innerWidth / window.innerHeight);
+    camera.updateProjectionMatrix();
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    render();
+}
+
+</script>
+</body>
+</html>
